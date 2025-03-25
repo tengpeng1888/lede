@@ -11,8 +11,8 @@ jobs:
     timeout-minutes: 180  # 设置编译超时时间
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4  # 更新为 v4 版本
       with:
         submodules: true  # 包含子模块
 
