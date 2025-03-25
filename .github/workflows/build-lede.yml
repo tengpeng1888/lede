@@ -1,0 +1,52 @@
+name: Build LEDE for PSG1218a
+
+on:
+  workflow_dispatch:  # 允许手动触发
+  push:
+    branches: [ main ]  # 当main分支有更新时自动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180  # 设置编译超时时间
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+      with:
+        submodules: true  # 包含子模块
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang flex bison gperf \
+          gcc-multilib g++-multilib libc6-dev-i386 lib32ncurses5-dev \
+          xz-utils cmake git mercurial unzip wget python3 python3-pip \
+          rsync file rsync qemu qemu-utils u-boot-tools mtd-utils \
+          libssl-dev libncurses5-dev
+
+    - name: Setup feeds
+      run: |
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Configure for PSG1218a
+      run: |
+        make target/linux/clean V=s QUIET=1
+        make defconfig V=s QUIET=1
+        sed -i 's/^# $CONFIG_.*\bPSG1218A\b.*$$/\1/' .config
+        # 如果需要Luci界面，取消以下行的注释
+        # echo 'CONFIG_PACKAGE_luci=y' >> .config
+        # echo 'CONFIG_PACKAGE_luci-base=y' >> .config
+        # echo 'CONFIG_PACKAGE_luci-theme-bootstrap=y' >> .config
+        make olddefconfig V=s QUIET=1
+
+    - name: Build firmware
+      run: |
+        make -j$(nproc) V=s QUIET=1
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: LEDE-PSG1218a-Firmware
+        path: bin/targets/ramips/mt7620/openwrt-ramips-mt7620-phicomm_psg1218a-squashfs-sysupgrade.bin
