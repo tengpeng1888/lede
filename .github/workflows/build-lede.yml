@@ -1,52 +1,65 @@
 name: Build LEDE for PSG1218a
 
 on:
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:  # 手动触发
   push:
-    branches: [ main ]  # 当main分支有更新时自动触发
+    branches: [ main ]  # main分支推送时触发
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 180  # 设置编译超时时间
+    timeout-minutes: 240  # 超时时间延长至4小时
 
     steps:
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4  # 更新为 v4 版本
+    # ---------- 步骤1: 拉取代码 ----------
+    - name: Checkout repository
+      uses: actions/checkout@v4  # 必须使用v4版本
       with:
-        submodules: true  # 包含子模块
+        submodules: recursive  # 强制递归拉取子模块
+        fetch-depth: 0         # 获取完整提交历史
 
+    # ---------- 步骤2: 安装编译依赖 ----------
     - name: Install dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential clang flex bison gperf \
-          gcc-multilib g++-multilib libc6-dev-i386 lib32ncurses5-dev \
-          xz-utils cmake git mercurial unzip wget python3 python3-pip \
-          rsync file rsync qemu qemu-utils u-boot-tools mtd-utils \
-          libssl-dev libncurses5-dev
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends \
+          build-essential clang flex bison gperf \
+          gcc-multilib g++-multilib libc6-dev-i386 \
+          lib32ncurses5-dev xz-utils cmake git \
+          mercurial unzip wget rsync file qemu-utils \
+          u-boot-tools mtd-utils libssl-dev \
+          python3 python3-pip zlib1g-dev
 
-    - name: Setup feeds
+    # ---------- 步骤3: 初始化配置 ----------
+    - name: Setup feeds and config
       run: |
         ./scripts/feeds update -a
         ./scripts/feeds install -a
+        cp -f $GITHUB_WORKSPACE/configs/psg1218a.config .config || true  # 自定义配置文件（如果有）
 
-    - name: Configure for PSG1218a
-      run: |
-        make target/linux/clean V=s QUIET=1
-        make defconfig V=s QUIET=1
-        sed -i 's/^# $CONFIG_.*\bPSG1218A\b.*$$/\1/' .config
-        # 如果需要Luci界面，取消以下行的注释
-        # echo 'CONFIG_PACKAGE_luci=y' >> .config
-        # echo 'CONFIG_PACKAGE_luci-base=y' >> .config
-        # echo 'CONFIG_PACKAGE_luci-theme-bootstrap=y' >> .config
-        make olddefconfig V=s QUIET=1
+        # 如果无预配置，则生成默认配置
+        if [ ! -f .config ]; then
+          make defconfig
+          sed -i 's/^# $CONFIG_TARGET_ramips_mt7620_DEVICE_phicomm_psg1218a.*$/\1/' .config
+          echo 'CONFIG_TARGET_ramips_mt7620_DEVICE_phicomm_psg1218a=y' >> .config
+        fi
 
+        # 强制检查配置完整性
+        make olddefconfig
+
+    # ---------- 步骤4: 编译固件 ----------
     - name: Build firmware
       run: |
-        make -j$(nproc) V=s QUIET=1
+        make -j$(($(nproc) + 1)) V=s  # 启用并行编译加速
+        echo "固件生成路径："
+        ls -lh bin/targets/ramips/mt7620/
 
+    # ---------- 步骤5: 上传编译结果 ----------
     - name: Upload artifact
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v4  # 必须使用v4版本
+      if: success()  # 仅在编译成功时上传
       with:
         name: LEDE-PSG1218a-Firmware
-        path: bin/targets/ramips/mt7620/openwrt-ramips-mt7620-phicomm_psg1218a-squashfs-sysupgrade.bin
+        path: |
+          bin/targets/ramips/mt7620/*.bin
+          bin/targets/ramips/mt7620/sha256sums
